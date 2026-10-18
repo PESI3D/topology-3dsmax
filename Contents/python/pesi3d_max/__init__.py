@@ -13,7 +13,7 @@ import traceback
 from . import registry as _registry
 from .log import get_logger, log_dir
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 MENU_TITLE = "PESI3D"
 CORE_ID = "core"
 SHARED_MENU_ID = "abd4e2a7-552b-42c8-8087-1d114c477063"   # same as PESI3D_Topology.ms
@@ -32,6 +32,9 @@ def boot():
     rt.callbacks.removeScripts(id=rt.Name("pesi3d_menus"))
     rt.callbacks.addScript(rt.Name("cuiRegisterMenus"), _on_register_menus,
                            id=rt.Name("pesi3d_menus"))
+    rt.callbacks.removeScripts(id=rt.Name("pesi3d_toolbar"))
+    rt.callbacks.addScript(rt.Name("postSystemStartup"), _on_startup,
+                           id=rt.Name("pesi3d_toolbar"))
     log.info("PESI3D Tools %s booted, plugins: %s", VERSION, ", ".join(REGISTRY.plugins))
 
 
@@ -108,12 +111,22 @@ def _on_register_menus():
                 continue
             sub = root.CreateSubMenu(guid("menu/" + plugin.plugin_id), plugin.name)
             for a in plugin.actions:
-                sub.CreateAction(guid("item/" + a.macro_name), _registry.MACRO_TABLE_ID, a.macro_ref)
+                sub.CreateAction(guid("item/" + a.macro_name), _registry.MACRO_TABLE_ID,
+                                 a.macro_ref, title=a.text)
         root.CreateSeparator(guid("sep/core"))
         for a in _CORE_ACTIONS:
             root.CreateAction(guid("item/" + a.macro_name), _registry.MACRO_TABLE_ID, a.macro_ref)
     except Exception:
         log.error("menu registration failed:\n%s", traceback.format_exc())
+
+
+def _on_startup():
+    """After the main window exists: the shared PESI3D toolbar."""
+    try:
+        from . import toolbar
+        toolbar.install([a for a in REGISTRY.actions() if a.icon])
+    except Exception:
+        log.error("toolbar failed:\n%s", traceback.format_exc())
 
 
 def _shared_menu(bar):

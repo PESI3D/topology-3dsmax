@@ -6,11 +6,21 @@
   Python 3 + PySide6 tools; needs 3ds Max 2025 or newer (new menu system).
 -->
 <ApplicationPackage SchemaVersion="1.0" AutodeskProduct="3ds Max" ProductType="Application"
-                    Name="PESI3D Tools" AppVersion="0.1.0" Author="PESI3D"
+                    Name="PESI3D Tools" AppVersion="0.2.0" Author="PESI3D"
                     Description="Modelling helpers for 3ds Max by PESI3D."
                     ProductCode="*" UpgradeCode="{6a001dd1-3ab1-4ac6-8447-33e1fa32c85b}">
     <CompanyDetails Name="PESI3D" Url="https://pesi3d.de" Email="kontakt@pesi3d.de"/>
     <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2025" SeriesMax="2027"/>
+
+    <!-- Icons: iconName "PESI3D\Topology_Contours" -> Contents\icons\<theme>\PESI3D\Topology_Contours_<size>.png -->
+    <Components Description="dark icon paths parts">
+        <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2025" SeriesMax="2027"/>
+        <ComponentEntry AppName="PESI3D-dark-icons" ModuleName="./Contents/icons/Dark"/>
+    </Components>
+    <Components Description="light icon paths parts">
+        <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2025" SeriesMax="2027"/>
+        <ComponentEntry AppName="PESI3D-light-icons" ModuleName="./Contents/icons/Light"/>
+    </Components>
 
     <!-- Puts Contents\python on sys.path and registers the PESI3D menu
          (#cuiRegisterMenus must be hooked before the menus are built). -->

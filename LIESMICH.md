@@ -3,7 +3,8 @@
 Modellier-Helfer für Autodesk 3ds Max von [PESI3D](https://pesi3d.de) — das
 3ds-Max-Gegenstück zu den PESI3D-Plugins für IngeTrazo.
 
-> Stand: **0.1.0 – nur das Grundgerüst** mit einem Vorlage-Plugin (*Hello Box*).
+> Stand: **0.2.0** – Grundgerüst, **Topology** (Gelände aus Höhenlinien oder Punkten)
+> und das Vorlage-Plugin *Hello Box*.
 
 Benötigt **3ds Max 2025 oder neuer** (Python 3 + PySide6, neues Menüsystem).
 Getestet mit 3ds Max 2027.

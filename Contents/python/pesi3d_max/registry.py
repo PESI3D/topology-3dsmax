@@ -34,13 +34,18 @@ def stable_guid(key):
 class Action:
     plugin_id: str
     action_id: str
-    text: str
+    text: str                   # menu text inside the plugin's submenu
     callback: object
     tooltip: str = ""
+    label: str = ""             # MacroScript buttonText ("Topology: ..."), shown
+                                # in the Hotkey Editor and on toolbars
+    macro: str = ""             # MacroScript name; default pesi3d_<plugin>_<action>
+    icon: str = ""              # iconName, e.g. "PESI3D\\Topology_Contours"
+                                # (files in Contents/icons/{Dark,Light}/PESI3D/)
 
     @property
     def macro_name(self):
-        return "pesi3d_%s_%s" % (self.plugin_id, self.action_id)
+        return self.macro or "pesi3d_%s_%s" % (self.plugin_id, self.action_id)
 
     @property
     def macro_ref(self):
@@ -49,11 +54,12 @@ class Action:
 
     def macro_source(self):
         call = "import pesi3d_max; pesi3d_max.run('%s', '%s')" % (self.plugin_id, self.action_id)
+        icon = ' iconName:"%s"' % _ms_str(self.icon) if self.icon else ""
         return (
-            'macroScript %s category:"%s" buttonText:"%s" toolTip:"%s"\n'
+            'macroScript %s category:"%s" buttonText:"%s" toolTip:"%s"%s\n'
             '(\n\ton execute do python.Execute "%s"\n)\n'
-            % (self.macro_name, CATEGORY, _ms_str(self.text),
-               _ms_str(self.tooltip or self.text), call)
+            % (self.macro_name, CATEGORY, _ms_str(self.label or self.text),
+               _ms_str(self.tooltip or self.text), icon, call)
         )
 
 
@@ -72,13 +78,20 @@ class PluginApi:
     def __init__(self, plugin):
         self._plugin = plugin
 
-    def add_action(self, action_id, text, callback, tooltip=""):
+    def add_action(self, action_id, text, callback, tooltip="", macro="", icon=""):
+        """``macro`` keeps an existing MacroScript name (hotkeys and toolbar
+        buttons the user already has keep working); ``icon`` puts the action
+        on the PESI3D toolbar too."""
         if not _ID_RE.match(action_id):
             raise ValueError("action id must be lower_snake_case: %r" % action_id)
         if any(a.action_id == action_id for a in self._plugin.actions):
             raise ValueError("duplicate action id: %r" % action_id)
+        if macro and not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", macro):
+            raise ValueError("bad MacroScript name: %r" % macro)
+        label = text if text.startswith(self._plugin.name) else "%s: %s" % (self._plugin.name, text)
         self._plugin.actions.append(
-            Action(self._plugin.plugin_id, action_id, text, callback, tooltip))
+            Action(self._plugin.plugin_id, action_id, text, callback, tooltip,
+                   label, macro, icon))
 
 
 class Registry:
