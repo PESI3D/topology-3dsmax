@@ -10,6 +10,8 @@
 * **Terrain from Points** — select Point helpers, mesh/poly objects
   (their vertices) or splines (their knots). A Delaunay TIN goes exactly
   through every point; long rim triangles can be trimmed.
+* **Terrain from Plan** (1.1) - the spot heights of a site plan (vector
+  PDF), see plan.py; they become a Terrain from Points.
 
 Both: footprint (outline / rectangle interpolated / rectangle cut),
 optional skirt with closed bottom, the contours and a flat contour map as
@@ -42,7 +44,7 @@ except Exception:  # noqa: BLE001
 
 KEY = "pesi_topology"
 TITLE = "Topology"
-VERSION = "1.0"
+VERSION = "1.1"
 APPDATA_ID = 0x50D3A2               # node AppData slot (Grading uses …A1)
 CHILD_ID = 0x50D3A3                 # AppData tag on the child splines
 SETTINGS_ORG = "PESI3D"
@@ -1892,13 +1894,18 @@ def make_record(data, p):
     else:
         rec["points"] = [[round(float(v), 5) for v in q]
                          for q in data["points"]]
+        if data.get("source"):                 # Terrain from Plan: file, scale
+            rec["source"] = data["source"]
     return rec
 
 
 def data_from_record(rec):
     if rec["mode"] == "contours":
         return {"mode": "contours", "cset": ContourSet.from_record(rec["lines"])}
-    return {"mode": "points", "points": [tuple(q) for q in rec["points"]]}
+    data = {"mode": "points", "points": [tuple(q) for q in rec["points"]]}
+    if rec.get("source"):
+        data["source"] = rec["source"]
+    return data
 
 
 def _children(node):

@@ -3,8 +3,8 @@
 Modelling helpers for Autodesk 3ds Max by [PESI3D](https://pesi3d.de) — the
 3ds Max counterpart of the PESI3D plugins for IngeTrazo.
 
-> Status: **0.2.0** – framework, **Topology** (terrain from contour splines or points)
-> and the template plugin *Hello Box*.
+> Status: **0.3.0** – framework, **Topology** (terrain from contour splines, points or
+> the spot heights of a site plan PDF) and the template plugin *Hello Box*.
 
 Requires **3ds Max 2025 or newer** (Python 3 + PySide6, new menu system).
 Tested on 3ds Max 2027.
@@ -47,6 +47,9 @@ Development: `tools\install_dev.ps1` links the working copy into
 ## License
 
 GPL-3.0 — see [LICENSE](LICENSE).
+
+Topology bundles [pypdf](https://github.com/py-pdf/pypdf) (BSD-3-Clause, licence in
+`Contents/python/pesi3d_max/plugins/topology/_vendor/pypdf/LICENSE`) to read PDF plans.
 
 Not affiliated with or endorsed by Autodesk. 3ds Max is a trademark of Autodesk, Inc.
 

@@ -3,8 +3,8 @@
 Modellier-Helfer für Autodesk 3ds Max von [PESI3D](https://pesi3d.de) — das
 3ds-Max-Gegenstück zu den PESI3D-Plugins für IngeTrazo.
 
-> Stand: **0.2.0** – Grundgerüst, **Topology** (Gelände aus Höhenlinien oder Punkten)
-> und das Vorlage-Plugin *Hello Box*.
+> Stand: **0.3.0** – Grundgerüst, **Topology** (Gelände aus Höhenlinien, Punkten oder den
+> Höhenpunkten eines Lageplan-PDFs) und das Vorlage-Plugin *Hello Box*.
 
 Benötigt **3ds Max 2025 oder neuer** (Python 3 + PySide6, neues Menüsystem).
 Getestet mit 3ds Max 2027.
@@ -34,6 +34,9 @@ Undo-Schritt).
 ## Lizenz
 
 GPL-3.0 — siehe [LICENSE](LICENSE).
+
+Topology enthält [pypdf](https://github.com/py-pdf/pypdf) (BSD-3-Clause, Lizenz in
+`Contents/python/pesi3d_max/plugins/topology/_vendor/pypdf/LICENSE`) zum Lesen von PDF-Plänen.
 
 Nicht mit Autodesk verbunden oder von Autodesk unterstützt. 3ds Max ist eine Marke von Autodesk, Inc.
 

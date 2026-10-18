@@ -13,7 +13,7 @@ import traceback
 from . import registry as _registry
 from .log import get_logger, log_dir
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 MENU_TITLE = "PESI3D"
 CORE_ID = "core"
 SHARED_MENU_ID = "abd4e2a7-552b-42c8-8087-1d114c477063"   # same as PESI3D_Topology.ms
