@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  PESI3D Tools for 3ds Max - Autodesk application package.
+  3ds Max loads this folder from %APPDATA%\Autodesk\ApplicationPlugins\ (per user)
+  or %ProgramData%\Autodesk\ApplicationPlugins\ (all users).
+  Python 3 + PySide6 tools; needs 3ds Max 2025 or newer (new menu system).
+-->
+<ApplicationPackage SchemaVersion="1.0" AutodeskProduct="3ds Max" ProductType="Application"
+                    Name="PESI3D Tools" AppVersion="0.1.0" Author="PESI3D"
+                    Description="Modelling helpers for 3ds Max by PESI3D."
+                    ProductCode="*" UpgradeCode="{6a001dd1-3ab1-4ac6-8447-33e1fa32c85b}">
+    <CompanyDetails Name="PESI3D" Url="https://pesi3d.de" Email="kontakt@pesi3d.de"/>
+    <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2025" SeriesMax="2027"/>
+
+    <!-- Puts Contents\python on sys.path and registers the PESI3D menu
+         (#cuiRegisterMenus must be hooked before the menus are built). -->
+    <Components Description="pre-start-up scripts parts">
+        <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2025" SeriesMax="2027"/>
+        <ComponentEntry ModuleName="./Contents/scripts/pesi3d_prestartup.ms"/>
+    </Components>
+</ApplicationPackage>

@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+dist/
+# Kundendaten nie committen
+KUNDE/
+*.max
+*.pdf
