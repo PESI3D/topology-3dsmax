@@ -6,7 +6,7 @@ Modelling helpers for Autodesk 3ds Max by [PESI3D](https://pesi3d.de) — the
 > Status: **0.1.0 – framework only.** It ships one template plugin (*Hello Box*).
 
 Requires **3ds Max 2025 or newer** (Python 3 + PySide6, new menu system).
-Tested on 3ds Max 2026 and 2027.
+Tested on 3ds Max 2027.
 
 ## Install
 
