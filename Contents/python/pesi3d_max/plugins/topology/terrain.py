@@ -80,6 +80,7 @@ def default_params() -> dict:
         "quad_rim": "whole",      # quads: "whole" cells only (stepped rim)
                                   # | "snap" (+ a ring of quads out to the
                                   # outline) | "cut" (contours: n-gons)
+        "rim_relax": True,        # quads + "snap": even out the rim quads
         "grid_angle": "auto",     # points + quads: "auto" (along the site)
                                   # | "axis" (world X/Y)
         "smooth_r": 0.0,          # contours: smoothing radius, 0 = raw
@@ -993,8 +994,12 @@ def terrain_from_contours(segs, p):
         outline = Outline(hull)
         full = keep_off_outline(full, X, Y, outline, h)
         V, T, C = quad_cells(X, Y, Z, full)
-        return snap_rim(V, T, C, outline,
-                        lambda xy, t: bilinear(Z, x0, y0, h, xy), h)
+        n0 = len(V)
+        V, T, C = snap_rim(V, T, C, outline,
+                           lambda xy, t: bilinear(Z, x0, y0, h, xy), h)
+        if p.get("rim_relax", True):
+            V = relax_rim(V, T, C, n0, lambda xy: bilinear(Z, x0, y0, h, xy), h)
+        return V, T, C
 
     # Full cells: two triangles each, split along the diagonal whose ends
     # are closer in height (follows ridges and valleys).
@@ -1546,6 +1551,88 @@ def snap_rim(V, T, C, outline, zfun, h):
             np.concatenate([C, np.asarray(newC, dtype=np.int64)]))
 
 
+def relax_rim(V, T, C, first_outline_id, zfun, h, rings=2, iters=12):
+    """Even out the quads next to a snapped rim: the nodes up to ``rings``
+    quad edges in from the outline move step by step towards the middle of
+    their neighbours (the outline nodes stay put); a step that would fold
+    or squash a quad is not taken. Moved nodes get their height again from
+    the surface, ``zfun(xy)``."""
+    import numpy as np
+    V = np.array(V, dtype=float)
+    polys = cells_to_polys(T, C)
+    nbr = {}
+    owner = {}
+    for qi, q in enumerate(polys):
+        for k in range(len(q)):
+            a, b = q[k], q[(k + 1) % len(q)]
+            nbr.setdefault(a, set()).add(b)
+            nbr.setdefault(b, set()).add(a)
+            owner.setdefault(a, []).append(qi)
+    fixed = set(range(first_outline_id, len(V)))
+    depth = {i: 0 for i in fixed}
+    front = list(fixed)
+    for d in range(1, rings + 1):
+        nxt = []
+        for i in front:
+            for j in nbr.get(i, ()):
+                if j not in depth:
+                    depth[j] = d
+                    nxt.append(j)
+        front = nxt
+    movable = sorted(i for i, d in depth.items() if d >= 1)
+    if not movable:
+        return V
+    min_area = 0.05 * h * h
+
+    def ok(i):
+        for qi in owner.get(i, ()):
+            if polygon_area(V[polys[qi], :2]) < min_area:
+                return False
+        return True
+
+    for _ in range(iters):
+        for i in movable:
+            old = V[i, :2].copy()
+            m = np.mean(V[list(nbr[i]), :2], axis=0)
+            V[i, :2] = old + 0.5 * (m - old)
+            if not ok(i):
+                V[i, :2] = old
+    z = np.asarray(zfun(V[movable, :2]), dtype=float)
+    good = np.isfinite(z)
+    V[np.asarray(movable)[good], 2] = z[good]
+    return V
+
+
+def tin_at(P, Zv, T, xy):
+    """Heights of the TIN (vertices ``P`` (n, 2), heights ``Zv``) at the
+    points ``xy``; NaN outside it."""
+    import numpy as np
+    xy = np.asarray(xy, dtype=float)
+    out = np.full(len(xy), np.nan)
+    A, B, Cc = P[T[:, 0]], P[T[:, 1]], P[T[:, 2]]
+    det = (B[:, 1] - Cc[:, 1]) * (A[:, 0] - Cc[:, 0]) + \
+          (Cc[:, 0] - B[:, 0]) * (A[:, 1] - Cc[:, 1])
+    ok = np.abs(det) > 1e-18
+    A, B, Cc, det, T = A[ok], B[ok], Cc[ok], det[ok], T[ok]
+    step = max(1, 4_000_000 // max(len(T), 1))
+    for s0 in range(0, len(xy), step):
+        q = xy[s0:s0 + step]
+        l1 = ((B[None, :, 1] - Cc[None, :, 1]) * (q[:, None, 0] - Cc[None, :, 0]) +
+              (Cc[None, :, 0] - B[None, :, 0]) * (q[:, None, 1] - Cc[None, :, 1])) / det[None]
+        l2 = ((Cc[None, :, 1] - A[None, :, 1]) * (q[:, None, 0] - Cc[None, :, 0]) +
+              (A[None, :, 0] - Cc[None, :, 0]) * (q[:, None, 1] - Cc[None, :, 1])) / det[None]
+        l3 = 1.0 - l1 - l2
+        inside = (l1 >= -1e-9) & (l2 >= -1e-9) & (l3 >= -1e-9)
+        has = inside.any(1)
+        k = inside.argmax(1)
+        r = np.arange(len(q))
+        tt = T[k]
+        z = (l1[r, k] * Zv[tt[:, 0]] + l2[r, k] * Zv[tt[:, 1]]
+             + l3[r, k] * Zv[tt[:, 2]])
+        out[s0:s0 + step] = np.where(has, z, np.nan)
+    return out
+
+
 def keep_off_outline(full, X, Y, outline, h):
     """Whole cells whose corners stay ≥ 0.4 cells off the outline — room
     for the ring of quads ``snap_rim`` lays round them."""
@@ -1606,8 +1693,12 @@ def quad_grid_from_tin(V, T, p):
             full = keep_off_outline(full, U, W, outline, h)
     Vq, Tq, Cq = quad_cells(U, W, np.nan_to_num(Z), full)
     if outline is not None:
+        n0 = len(Vq)
         Vq, Tq, Cq = snap_rim(Vq, Tq, Cq, outline,
                               lambda xy, t: outline.z_at(t), h)
+        if p.get("rim_relax", True):
+            Vq = relax_rim(Vq, Tq, Cq, n0,
+                           lambda xy: tin_at(L, V[:, 2], T, xy), h)
     X = Vq[:, 0] * c - Vq[:, 1] * s
     Y = Vq[:, 0] * s + Vq[:, 1] * c
     return np.column_stack([X, Y, Vq[:, 2]]), Tq, Cq
@@ -2548,7 +2639,13 @@ def _make_dialog_class():
             gl.addWidget(self.chk_quads, r, 0, 1, 2)
             gl.addWidget(QLabel("Quads on the rim:"), r + 1, 0)
             gl.addWidget(self.cb_rim, r + 1, 1)
-            r += 2
+            self.chk_relax = QCheckBox("Relax the rim quads (no sharp corners)")
+            self.chk_relax.setToolTip(
+                "Snap to the outline: the nodes of the first two rows inside "
+                "the rim move towards the middle of their neighbours, so the "
+                "quads along the rim come out even. The outline stays exact.")
+            gl.addWidget(self.chk_relax, r + 2, 0, 1, 2)
+            r += 3
             gl.addWidget(self.chk_soft, r, 0, 1, 2)
             gl.addWidget(self.chk_skirt, r + 1, 0)
             gl.addWidget(self.sp_depth, r + 1, 1)
@@ -2584,7 +2681,7 @@ def _make_dialog_class():
                 w.valueChanged.connect(self._changed)
             for w in (self.cb_bound, self.cb_peaks, self.cb_angle, self.cb_rim):
                 w.currentIndexChanged.connect(self._changed)
-            for w in (self.rb_cells, self.chk_quads, self.chk_soft,
+            for w in (self.rb_cells, self.chk_quads, self.chk_relax, self.chk_soft,
                       self.chk_skirt, self.chk_bottom, self.chk_cont,
                       self.chk_map, self.chk_follow):
                 w.toggled.connect(self._changed)
@@ -2600,7 +2697,8 @@ def _make_dialog_class():
                     self.sp_depth, self.cb_bound, self.cb_peaks, self.rb_cells,
                     self.rb_size, self.chk_quads, self.chk_soft,
                     self.chk_skirt, self.chk_bottom, self.chk_cont,
-                    self.chk_map, self.chk_follow, self.cb_angle, self.cb_rim)
+                    self.chk_map, self.chk_follow, self.cb_angle, self.cb_rim,
+                    self.chk_relax)
 
         def _load_ui(self):
             p = self.params
@@ -2621,6 +2719,7 @@ def _make_dialog_class():
             self.chk_quads.setChecked(p["quads"])
             self.cb_angle.setCurrentIndex(max(0, self.cb_angle.findData(p["grid_angle"])))
             self.cb_rim.setCurrentIndex(max(0, self.cb_rim.findData(p["quad_rim"])))
+            self.chk_relax.setChecked(p["rim_relax"])
             self.chk_soft.setChecked(p["soft"])
             self.chk_skirt.setChecked(p["skirt"])
             self.chk_bottom.setChecked(p["bottom"])
@@ -2647,6 +2746,7 @@ def _make_dialog_class():
                 "quads": self.chk_quads.isChecked(),
                 "quad_rim": self.cb_rim.currentData(),
                 "grid_angle": self.cb_angle.currentData(),
+                "rim_relax": self.chk_relax.isChecked(),
                 "smooth_r": self.sp_sr.value(),
                 "skirt": self.chk_skirt.isChecked(),
                 "skirt_depth": self.sp_depth.value(),
@@ -2666,6 +2766,7 @@ def _make_dialog_class():
             self.sp_csize.setEnabled(grid and self.rb_size.isChecked())
             self.cb_angle.setEnabled(q and self.cb_bound.currentData() == "hull")
             self.cb_rim.setEnabled(q)
+            self.chk_relax.setEnabled(q and self.cb_rim.currentData() == "snap")
             sk = self.chk_skirt.isChecked()
             self.sp_depth.setEnabled(sk)
             self.chk_bottom.setEnabled(sk)

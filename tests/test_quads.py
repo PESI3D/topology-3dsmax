@@ -139,6 +139,28 @@ class SnappedRimTest(unittest.TestCase):
         hull = T.convex_hull(np.round(np.concatenate([S[:, 0:2], S[:, 3:5]]), 9))
         check_snapped(self, {"V": V, "T": Tr, "C": C}, hull)
 
+    def test_relaxed_rim_has_no_sharp_quads(self):
+        def min_angle(V, polys):
+            m = 180.0
+            for q in polys:
+                P = V[q, :2]
+                for i in range(4):
+                    u, v = P[i - 1] - P[i], P[(i + 1) % 4] - P[i]
+                    m = min(m, math.degrees(math.acos(np.clip(
+                        u @ v / (np.linalg.norm(u) * np.linalg.norm(v)), -1, 1))))
+            return m
+        segs = ContoursQuadsTest.cone_segs(None)
+        S = np.asarray(segs)
+        hull = T.convex_hull(np.round(np.concatenate([S[:, 0:2], S[:, 3:5]]), 9))
+        angles = {}
+        for relax in (False, True):
+            p = params(peaks="flat", quad_rim="snap", rim_relax=relax)
+            V, Tr, C = T.terrain_from_contours(segs, p)
+            polys, _a = check_snapped(self, {"V": V, "T": Tr, "C": C}, hull)
+            angles[relax] = min_angle(V, polys)
+        self.assertLess(angles[False], 30.0)
+        self.assertGreater(angles[True], 45.0)
+
     def test_snapped_solid_is_closed(self):
         p = params(peaks="flat", quad_rim="snap", skirt=True, bottom=True)
         segs = ContoursQuadsTest.cone_segs(None)
