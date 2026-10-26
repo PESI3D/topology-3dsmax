@@ -2116,7 +2116,10 @@ def assemble(res, p):
     if quad_bottom:
         nterr = len(verts)
         base_of = [vid((q[0], q[1], zbase)) for q in verts[:nterr]]
-    # skirt quads (B, A, A_base, B_base) → two triangles, hidden diagonal
+    # skirt quads (B, A, A_base, B_base) → two triangles, hidden diagonal;
+    # one smoothing group per straight run, so the corners stay sharp
+    skirt_rings = [r for r, k in zip(polys, kinds) if k == "skirt"]
+    skirt_sg = iter(skirt_groups(skirt_rings))
     bottoms = []
     for ring, kind in zip(polys, kinds):
         if kind == "skirt":
@@ -2124,7 +2127,8 @@ def assemble(res, p):
             f = len(tris)
             tris.append((B, A, Ab))
             tris.append((B, Ab, Bb))
-            sg += [2 if soft else 0] * 2
+            g = next(skirt_sg)
+            sg += [g if soft else 0] * 2
             hide += [(f, 3), (f + 1, 1)]
         elif kind == "bottom" and not quad_bottom:
             bottoms.append([vid(q) for q in ring])
@@ -2156,6 +2160,57 @@ def assemble(res, p):
             "hide": hide, "bottoms": bottoms, "nfaces": nfaces, "unit": unit,
             "zmin": zmin, "zmax": zmax,
             "base": zmin - p["skirt_depth"]}
+
+
+SKIRT_GROUPS = (2, 3, 5, 6)      # 1 = terrain, 4 = bottom
+SKIRT_CORNER_DEG = 30.0
+
+
+def skirt_groups(rings):
+    """Smoothing group per skirt quad ``[B, A, A_base, B_base]`` (rim edge
+    A → B): the quads of one straight run of the rim share a group, and
+    where the rim turns by more than SKIRT_CORNER_DEG the group changes —
+    neighbouring runs never share one, so the corners stay sharp."""
+    n = len(rings)
+    if n == 0:
+        return []
+
+    def key(q):
+        return (round(q[0], 6), round(q[1], 6))
+
+    A = [key(r[1]) for r in rings]
+    B = [key(r[0]) for r in rings]
+    start = {}
+    for i, a in enumerate(A):
+        start.setdefault(a, i)
+    parent = list(range(n))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    nxt = [start.get(b) for b in B]
+    for i, j in enumerate(nxt):
+        if j is None:
+            continue
+        dx1, dy1 = rings[i][0][0] - rings[i][1][0], rings[i][0][1] - rings[i][1][1]
+        dx2, dy2 = rings[j][0][0] - rings[j][1][0], rings[j][0][1] - rings[j][1][1]
+        turn = abs(math.degrees(math.atan2(dx1 * dy2 - dy1 * dx2, dx1 * dx2 + dy1 * dy2)))
+        if turn < SKIRT_CORNER_DEG:
+            parent[find(j)] = find(i)
+    comp = [find(i) for i in range(n)]
+    touch = {}
+    for i, j in enumerate(nxt):
+        if j is not None and comp[i] != comp[j]:
+            touch.setdefault(comp[i], set()).add(comp[j])
+            touch.setdefault(comp[j], set()).add(comp[i])
+    colour = {}
+    for c in dict.fromkeys(comp):                     # in rim order
+        used = {colour[o] for o in touch.get(c, ()) if o in colour}
+        colour[c] = next((g for g in SKIRT_GROUPS if g not in used), SKIRT_GROUPS[0])
+    return [colour[c] for c in comp]
 
 
 def slope_max(res):

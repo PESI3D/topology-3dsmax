@@ -174,6 +174,33 @@ class SnappedRimTest(unittest.TestCase):
         self.assertEqual(A["bottoms"], [])
 
 
+class SkirtShadingTest(unittest.TestCase):
+    def test_sharp_skirt_corners(self):
+        rng = np.random.default_rng(5)
+        xy = np.vstack([rng.uniform([0, 0], [40, 20], (150, 2)),
+                        [[0, 0], [40, 0], [40, 20], [0, 20]]])
+        pts = list(map(tuple, np.column_stack([xy, 10 + 0.05 * xy[:, 0]])))
+        p = params(grid_angle="axis", quad_rim="snap", skirt=True, bottom=True)
+        res = T.compute({"mode": "points", "points": pts}, p)
+        polys, kinds, _e = T.build_polygons(res["V"], res["T"], p)
+        rings = [r for r, k in zip(polys, kinds) if k == "skirt"]
+        groups = T.skirt_groups(rings)
+        side = {}
+        for r, g in zip(rings, groups):
+            (bx, by, _), (ax, ay, _) = r[0], r[1]
+            d = (round(np.sign(bx - ax)), round(np.sign(by - ay)))
+            side.setdefault(d, set()).add(g)
+        self.assertEqual(len(side), 4)                        # four sides
+        self.assertTrue(all(len(g) == 1 for g in side.values()))   # one group each
+        g = {k: next(iter(v)) for k, v in side.items()}
+        order = [(1, 0), (0, 1), (-1, 0), (0, -1)]            # E, N, W, S runs
+        for a, b in zip(order, order[1:] + order[:1]):
+            self.assertNotEqual(g[a], g[b])                   # corners sharp
+        self.assertFalse({1, 4} & set(groups))                # not terrain/bottom
+        A = T.assemble(res, p)
+        self.assertEqual(sorted(set(A["sg"])), sorted({1, 4} | set(groups)))
+
+
 class ContoursQuadsTest(unittest.TestCase):
     def cone_segs(self):
         segs = []
