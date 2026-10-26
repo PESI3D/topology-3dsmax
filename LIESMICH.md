@@ -17,6 +17,14 @@ installieren (Internet nötig, keine Admin-Rechte; es ruft `pip install --user n
 mit dem Python von 3ds Max auf und zeigt den Fortschritt). Falls 3ds Max darum
 bittet, danach einmal neu starten.
 
+> **Hinweis:** numpy ist eine **separate Installation** – ein freies Python-Paket
+> (BSD-Lizenz), weder Teil von 3ds Max noch im Zip der PESI3D Tools enthalten. Es
+> landet in deinem Benutzerordner (`%APPDATA%\Python\Python3xx\site-packages`),
+> einmal **je Python-Version** von 3ds Max: 3ds Max 2025/2026 nutzen Python 3.11,
+> 3ds Max 2027 nutzt Python 3.13. Alle Plugins dieser 3ds-Max-Version teilen es sich.
+> Wer die PESI3D Tools entfernt, behält numpy; entfernen mit
+> `python.exe -m pip uninstall numpy`.
+
 Von Hand geht es auch, in der Eingabeaufforderung (Jahreszahl anpassen):
 
 ```

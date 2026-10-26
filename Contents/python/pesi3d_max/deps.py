@@ -105,11 +105,23 @@ def ensure(packages, tool, ask=None, install=None, tell=None,
     install = install or _install
     tell = tell or _tell
     names = " and ".join(todo)
+    try:
+        where = site.getusersitepackages()
+    except Exception:  # noqa: BLE001
+        where = "your user folder"
+    many = len(todo) > 1
     if not ask("%s needs the Python package%s %s, which 3ds Max does not "
-               "include.\n\nInstall %s now? (one time, internet needed, "
-               "no admin rights needed)"
-               % (tool, "s" if len(todo) > 1 else "", names,
-                  "them" if len(todo) > 1 else "it")):
+               "include.\n\n%s a separate installation (free, open source): "
+               "not part of 3ds Max or PESI3D Tools. %s into your user "
+               "folder, once for this 3ds Max's Python %d.%d, and all plugins "
+               "share %s:\n%s\n\nInstall %s now? (internet needed, no admin "
+               "rights needed)"
+               % (tool, "s" if many else "", names,
+                  "They are" if many else "It is",
+                  "They go" if many else "It goes",
+                  sys.version_info[0], sys.version_info[1],
+                  "them" if many else "it", where,
+                  "them" if many else "it")):
         return False
     log.info("installing %s", " ".join(todo))
     ok, out = install(todo)

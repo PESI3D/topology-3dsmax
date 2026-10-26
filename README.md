@@ -16,6 +16,13 @@ time you start a Topology tool it offers to install numpy with one click (intern
 needed, no admin rights; it runs `pip install --user numpy` with the Python of
 3ds Max and shows the progress). If 3ds Max asks for it, restart once afterwards.
 
+> **Note:** numpy is a **separate installation** — an open-source Python package
+> (BSD licence), not part of 3ds Max and not inside the PESI3D Tools zip. It goes
+> into your user folder (`%APPDATA%\Python\Python3xx\site-packages`), once **per
+> Python version** of 3ds Max: 3ds Max 2025/2026 use Python 3.11, 3ds Max 2027
+> uses Python 3.13. All plugins of that 3ds Max share it. Uninstalling PESI3D Tools
+> leaves numpy in place; remove it with `python.exe -m pip uninstall numpy`.
+
 To install it by hand instead, in a command prompt (adjust the year):
 
 ```
