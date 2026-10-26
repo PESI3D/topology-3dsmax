@@ -6,8 +6,22 @@ Modelling helpers for Autodesk 3ds Max by [PESI3D](https://pesi3d.de) — the
 > Status: **0.3.0** – framework, **Topology** (terrain from contour splines, points or
 > the spot heights of a site plan PDF) and the template plugin *Hello Box*.
 
-Requires **3ds Max 2025 or newer** (Python 3 + PySide6, new menu system).
+Requires **3ds Max 2025 or newer**: the tools use PySide6 (Qt 6, shipped since
+3ds Max 2025) and the menu system introduced with 3ds Max 2025. 3ds Max 2024 and
+older (Qt 5 / PySide2, old menu manager) are not supported.
 Tested on 3ds Max 2027.
+
+**Topology needs numpy** in the 3ds Max Python (3ds Max does not ship it). The first
+time you start a Topology tool it offers to install numpy with one click (internet
+needed, no admin rights; it runs `pip install --user numpy` with the Python of
+3ds Max and shows the progress). If 3ds Max asks for it, restart once afterwards.
+
+To install it by hand instead, in a command prompt (adjust the year):
+
+```
+"C:\Program Files\Autodesk\3ds Max 2027\Python\python.exe" -m ensurepip --upgrade --user
+"C:\Program Files\Autodesk\3ds Max 2027\Python\python.exe" -m pip install --user numpy
+```
 
 ## Install
 

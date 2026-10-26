@@ -61,7 +61,7 @@ def reload_plugins():
     New actions only get a menu entry after a restart."""
     import importlib
     import sys
-    for name in ("pesi3d_max.preview",):      # shared helpers the plugins import
+    for name in ("pesi3d_max.preview", "pesi3d_max.deps"):   # shared helpers the plugins import
         if name in sys.modules:
             importlib.reload(sys.modules[name])
     _discover(reload=True)

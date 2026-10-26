@@ -6,8 +6,23 @@ Modellier-Helfer für Autodesk 3ds Max von [PESI3D](https://pesi3d.de) — das
 > Stand: **0.3.0** – Grundgerüst, **Topology** (Gelände aus Höhenlinien, Punkten oder den
 > Höhenpunkten eines Lageplan-PDFs) und das Vorlage-Plugin *Hello Box*.
 
-Benötigt **3ds Max 2025 oder neuer** (Python 3 + PySide6, neues Menüsystem).
+Benötigt **3ds Max 2025 oder neuer**: Die Werkzeuge nutzen PySide6 (Qt 6, in 3ds Max
+seit 2025) und das mit 3ds Max 2025 eingeführte Menüsystem. 3ds Max 2024 und älter
+(Qt 5 / PySide2, alter Menü-Manager) werden nicht unterstützt.
 Getestet mit 3ds Max 2027.
+
+**Topology braucht numpy** im Python von 3ds Max (3ds Max liefert es nicht mit).
+Beim ersten Start eines Topology-Werkzeugs bietet es an, numpy mit einem Klick zu
+installieren (Internet nötig, keine Admin-Rechte; es ruft `pip install --user numpy`
+mit dem Python von 3ds Max auf und zeigt den Fortschritt). Falls 3ds Max darum
+bittet, danach einmal neu starten.
+
+Von Hand geht es auch, in der Eingabeaufforderung (Jahreszahl anpassen):
+
+```
+"C:\Program Files\Autodesk\3ds Max 2027\Python\python.exe" -m ensurepip --upgrade --user
+"C:\Program Files\Autodesk\3ds Max 2027\Python\python.exe" -m pip install --user numpy
+```
 
 ## Installation
 

@@ -3204,21 +3204,9 @@ def _open(data, old=None):
 
 
 def _numpy_ok():
-    """numpy needed; offers the one-click install (shared with Grading)."""
-    try:
-        import numpy  # noqa: F401
-        return True
-    except ImportError:
-        pass
-    try:
-        import pesi_grading
-        return pesi_grading._numpy_ok()
-    except ImportError:
-        _message("Topology needs numpy in the 3ds Max Python.\n\n"
-                 "In the 3ds Max Python folder run:\n"
-                 "  python.exe -m ensurepip --upgrade --user\n"
-                 "  python.exe -m pip install --user numpy scipy")
-        return False
+    """numpy needed; offers the one-click install (pesi3d_max.deps)."""
+    from ... import deps
+    return deps.ensure(("numpy",), "Topology")
 
 
 def show_contours():
