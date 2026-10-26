@@ -86,6 +86,72 @@ class PointsQuadsTest(unittest.TestCase):
         self.assertTrue(np.allclose(base[:, 2], A["base"]))
 
 
+def check_snapped(test, res, outline_xy):
+    """All quads, none folded, the rim on the outline, its corners hit."""
+    V, polys = res["V"], T.cells_to_polys(res["T"], res["C"])
+    test.assertTrue(all(len(q) == 4 for q in polys))
+    areas = [T.polygon_area(V[q, :2]) for q in polys]
+    test.assertGreater(min(areas), 0.0)                       # CCW, not folded
+    o = T.Outline(outline_xy)
+    rim, _loops = T.rim_loops(res["T"])
+    rim_ids = np.unique(rim.ravel())
+    d = o.distance(V[rim_ids, :2])
+    test.assertLess(float(d.max()), 1e-6 * o.length)          # rim on the outline
+    for corner in o.P[np.isin(o.cum[:-1], o.corners())]:
+        test.assertLess(float(np.hypot(*(V[rim_ids, :2] - corner).T).min()),
+                        1e-6 * o.length)                       # corners hit
+    return polys, areas
+
+
+class SnappedRimTest(unittest.TestCase):
+    def test_points_rectangle_turned(self):
+        rng = np.random.default_rng(3)
+        uv = np.vstack([rng.uniform([0, 0], [60, 30], (300, 2)),
+                        [[0, 0], [60, 0], [60, 30], [0, 30]]])
+        a = math.radians(20)
+        xy = np.column_stack([uv[:, 0] * math.cos(a) - uv[:, 1] * math.sin(a),
+                              uv[:, 0] * math.sin(a) + uv[:, 1] * math.cos(a)])
+        pts = np.column_stack([xy, 50 + 0.1 * xy[:, 0]])
+        p = params(quad_rim="snap")
+        res = T.compute({"mode": "points", "points": list(map(tuple, pts))}, p)
+        corners = xy[-4:]
+        polys, areas = check_snapped(self, res, corners)
+        # covers the whole site now (no stepped rim)
+        self.assertAlmostEqual(sum(areas), 60 * 30, delta=1e-6 * 1800)
+        np.testing.assert_allclose(res["V"][:, 2], 50 + 0.1 * res["V"][:, 0], atol=1e-6)
+
+    def test_points_irregular_outline(self):
+        rng = np.random.default_rng(7)
+        ang = rng.uniform(0, 2 * math.pi, 400)
+        rad = 30 * np.sqrt(rng.uniform(0, 1, 400))
+        xy = np.column_stack([rad * np.cos(ang) * 1.6, rad * np.sin(ang)])
+        pts = np.column_stack([xy, 0.02 * (xy ** 2).sum(1)])
+        p = params(quad_rim="snap", cells=25)
+        res = T.compute({"mode": "points", "points": list(map(tuple, pts))}, p)
+        hull = T.convex_hull(np.round(xy, 9))
+        check_snapped(self, res, hull)
+
+    def test_contours_hull(self):
+        p = params(peaks="flat", quad_rim="snap")
+        segs = ContoursQuadsTest.cone_segs(None)
+        V, Tr, C = T.terrain_from_contours(segs, p)
+        S = np.asarray(segs)
+        hull = T.convex_hull(np.round(np.concatenate([S[:, 0:2], S[:, 3:5]]), 9))
+        check_snapped(self, {"V": V, "T": Tr, "C": C}, hull)
+
+    def test_snapped_solid_is_closed(self):
+        p = params(peaks="flat", quad_rim="snap", skirt=True, bottom=True)
+        segs = ContoursQuadsTest.cone_segs(None)
+        res = T.compute({"mode": "contours",
+                         "cset": T.ContourSet.from_segs(segs)}, p)
+        A = T.assemble(res, p)
+        tris = np.asarray(A["tris"])
+        e = np.sort(np.concatenate([tris[:, [0, 1]], tris[:, [1, 2]], tris[:, [2, 0]]]), 1)
+        _u, cnt = np.unique(e, axis=0, return_counts=True)
+        self.assertTrue((cnt == 2).all())                     # watertight
+        self.assertEqual(A["bottoms"], [])
+
+
 class ContoursQuadsTest(unittest.TestCase):
     def cone_segs(self):
         segs = []

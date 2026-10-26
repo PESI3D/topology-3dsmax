@@ -77,8 +77,9 @@ def default_params() -> dict:
         "soft": True,
         "quads": False,           # one quad per grid cell (points: a grid
                                   # is laid over the TIN)
-        "quad_rim": "whole",      # contours + quads: "whole" cells only
-                                  # (clean quads) | "cut" to the outline
+        "quad_rim": "whole",      # quads: "whole" cells only (stepped rim)
+                                  # | "snap" (+ a ring of quads out to the
+                                  # outline) | "cut" (contours: n-gons)
         "grid_angle": "auto",     # points + quads: "auto" (along the site)
                                   # | "axis" (world X/Y)
         "smooth_r": 0.0,          # contours: smoothing radius, 0 = raw
@@ -114,7 +115,7 @@ def normalize_params(p) -> dict:
         out["peaks"] = "round"
     if out["boundary"] not in ("hull", "box", "cut"):
         out["boundary"] = "hull"
-    if out["quad_rim"] not in ("whole", "cut"):
+    if out["quad_rim"] not in ("whole", "snap", "cut"):
         out["quad_rim"] = "whole"
     if out["grid_angle"] not in ("auto", "axis"):
         out["grid_angle"] = "auto"
@@ -988,6 +989,12 @@ def terrain_from_contours(segs, p):
     full = inside[:-1, :-1] & inside[:-1, 1:] & inside[1:, :-1] & inside[1:, 1:]
     if p.get("quads") and p.get("quad_rim", "whole") == "whole":
         return quad_cells(X, Y, Z, full)
+    if p.get("quads") and p.get("quad_rim") == "snap":
+        outline = Outline(hull)
+        full = keep_off_outline(full, X, Y, outline, h)
+        V, T, C = quad_cells(X, Y, Z, full)
+        return snap_rim(V, T, C, outline,
+                        lambda xy, t: bilinear(Z, x0, y0, h, xy), h)
 
     # Full cells: two triangles each, split along the diagonal whose ends
     # are closer in height (follows ridges and valleys).
@@ -1398,10 +1405,179 @@ def sample_tin(P, Zv, T, u0, v0, h, nx, ny):
     return out.reshape(ny + 1, nx + 1)
 
 
+class Outline:
+    """A closed CCW polyline (the footprint) with arc-length parameters;
+    optional heights ``z`` at its corners (interpolated along the edges)."""
+
+    def __init__(self, xy, z=None):
+        import numpy as np
+        P = np.asarray(xy, dtype=float)[:, :2]
+        Z = None if z is None else np.asarray(z, dtype=float)
+        if len(P) > 1 and np.allclose(P[0], P[-1]):
+            P = P[:-1]
+            Z = None if Z is None else Z[:-1]
+        if polygon_area(P) < 0:
+            P = P[::-1]
+            Z = None if Z is None else Z[::-1]
+        self.P, self.Z = P, Z
+        self.Q = np.roll(P, -1, axis=0)
+        self.seg = np.hypot(*(self.Q - P).T)
+        self.cum = np.concatenate([[0.0], np.cumsum(self.seg)])
+        self.length = float(self.cum[-1])
+
+    def project(self, pts):
+        """Nearest point on the outline → (parameter t, distance)."""
+        import numpy as np
+        pts = np.asarray(pts, dtype=float)[:, :2]
+        best_t = np.zeros(len(pts))
+        best_d = np.full(len(pts), np.inf)
+        D = self.Q - self.P
+        L2 = np.maximum((D ** 2).sum(1), 1e-300)
+        step = max(1, 4_000_000 // max(len(self.P), 1))
+        for s0 in range(0, len(pts), step):
+            q = pts[s0:s0 + step]
+            u = ((q[:, None, 0] - self.P[None, :, 0]) * D[None, :, 0] +
+                 (q[:, None, 1] - self.P[None, :, 1]) * D[None, :, 1]) / L2[None]
+            u = np.clip(u, 0.0, 1.0)
+            cx = self.P[None, :, 0] + u * D[None, :, 0]
+            cy = self.P[None, :, 1] + u * D[None, :, 1]
+            d = np.hypot(q[:, None, 0] - cx, q[:, None, 1] - cy)
+            k = d.argmin(1)
+            r = np.arange(len(q))
+            best_d[s0:s0 + step] = d[r, k]
+            best_t[s0:s0 + step] = self.cum[k] + u[r, k] * self.seg[k]
+        return best_t, best_d
+
+    def distance(self, pts):
+        return self.project(pts)[1]
+
+    def _seg_of(self, t):
+        import numpy as np
+        t = np.mod(np.asarray(t, dtype=float), self.length)
+        k = np.clip(np.searchsorted(self.cum, t, side="right") - 1, 0, len(self.P) - 1)
+        f = (t - self.cum[k]) / np.maximum(self.seg[k], 1e-300)
+        return k, f
+
+    def at(self, t):
+        """Points at the parameters ``t`` (wrapped round the loop)."""
+        k, f = self._seg_of(t)
+        return self.P[k] + f[:, None] * (self.Q[k] - self.P[k])
+
+    def z_at(self, t):
+        import numpy as np
+        k, f = self._seg_of(t)
+        Zn = np.roll(self.Z, -1)
+        return self.Z[k] + f * (Zn[k] - self.Z[k])
+
+    def corners(self, min_turn_deg=25.0):
+        """Parameters of the outline's real corners (turn ≥ min_turn)."""
+        import numpy as np
+        a = self.Q - self.P
+        b = np.roll(a, 1, axis=0)                        # edge arriving at P[i]
+        ang = np.degrees(np.abs(np.arctan2(b[:, 0] * a[:, 1] - b[:, 1] * a[:, 0],
+                                           (b * a).sum(1))))
+        return self.cum[:-1][ang >= min_turn_deg]
+
+
+def polygon_area(P):
+    import numpy as np
+    P = np.asarray(P, dtype=float)
+    return 0.5 * float(np.sum(P[:, 0] * np.roll(P[:, 1], -1)
+                              - np.roll(P[:, 0], -1) * P[:, 1]))
+
+
+def snap_rim(V, T, C, outline, zfun, h):
+    """Whole-cell quads (``quad_cells``) → the same quads plus ONE ring of
+    quads out to ``outline``: every rim node of the cells gets a partner on
+    the outline (nearest point, kept in order and evened out; the outline's
+    corners are hit exactly). Heights of the new nodes: ``zfun(xy, t)``.
+    The new nodes follow the old ones, each loop from its south-west node."""
+    import numpy as np
+    _rim, loops = rim_loops(T)
+    V = np.asarray(V, dtype=float)
+    newV, newT, newC = [], [], []
+    nid = len(V)
+    cid = int(C.max()) + 1 if len(C) else 0
+    L = outline.length
+    corners = outline.corners()
+    for loop in loops:
+        if len(loop) < 4 or polygon_area(V[loop, :2]) <= 0:
+            continue                                     # a hole: leave it
+        k0 = int(np.argmin(loop))                        # lowest number = SW
+        loop = loop[k0:] + loop[:k0]
+        n = len(loop)
+        t, _d = outline.project(V[loop, :2])
+        # unwrap into one increasing turn round the outline
+        d = np.diff(np.concatenate([t, t[:1]]))
+        d = (d + L / 2) % L - L / 2
+        if abs(float(d.sum()) - L) > 0.25 * L:
+            continue                                     # not round the outline
+        d = np.maximum(d, 1e-3 * h)
+        d *= L / float(d.sum())
+        tt = t[0] + np.concatenate([[0.0], np.cumsum(d[:-1])])
+        for _ in range(4):                               # even the spacing out
+            prev = np.roll(tt, 1)
+            prev[0] -= L
+            nxt = np.roll(tt, -1)
+            nxt[-1] += L
+            tt = 0.25 * prev + 0.5 * tt + 0.25 * nxt
+        for c in corners:                                # hit the corners
+            c = tt[0] + ((c - tt[0]) % L)
+            i = int(np.argmin(np.abs(tt - c)))
+            lo = tt[i - 1] if i > 0 else tt[-1] - L
+            hi = tt[i + 1] if i < n - 1 else tt[0] + L
+            if lo < c < hi:
+                tt[i] = c
+        P2 = outline.at(tt)
+        Z2 = np.asarray(zfun(P2, tt), dtype=float)
+        ids = list(range(nid, nid + n))
+        nid += n
+        newV.append(np.column_stack([P2, Z2]))
+        for i in range(n):
+            A, B = loop[i], loop[(i + 1) % n]
+            A2, B2 = ids[i], ids[(i + 1) % n]
+            newT += [(A, A2, B2), (A, B2, B)]            # quad A A' B' B
+            newC += [cid, cid]
+            cid += 1
+    if not newV:
+        return V, T, C
+    return (np.vstack([V] + newV),
+            np.vstack([T, np.asarray(newT, dtype=np.int64)]),
+            np.concatenate([C, np.asarray(newC, dtype=np.int64)]))
+
+
+def keep_off_outline(full, X, Y, outline, h):
+    """Whole cells whose corners stay ≥ 0.4 cells off the outline — room
+    for the ring of quads ``snap_rim`` lays round them."""
+    import numpy as np
+    used = np.zeros(X.shape, bool)
+    used[:-1, :-1] |= full
+    used[:-1, 1:] |= full
+    used[1:, :-1] |= full
+    used[1:, 1:] |= full
+    ok = np.zeros(X.shape, bool)
+    ok[used] = outline.distance(np.column_stack([X[used], Y[used]])) >= 0.4 * h
+    return full & ok[:-1, :-1] & ok[:-1, 1:] & ok[1:, :-1] & ok[1:, 1:]
+
+
+def bilinear(Z, x0, y0, h, xy):
+    """Heights of the grid ``Z`` at the points ``xy`` (clamped to it)."""
+    import numpy as np
+    ny, nx = Z.shape[0] - 1, Z.shape[1] - 1
+    fx = np.clip((xy[:, 0] - x0) / h, 0, nx)
+    fy = np.clip((xy[:, 1] - y0) / h, 0, ny)
+    i = np.minimum(np.floor(fx).astype(int), max(nx - 1, 0))
+    j = np.minimum(np.floor(fy).astype(int), max(ny - 1, 0))
+    u, v = fx - i, fy - j
+    return (Z[j, i] * (1 - u) * (1 - v) + Z[j, i + 1] * u * (1 - v)
+            + Z[j + 1, i] * (1 - u) * v + Z[j + 1, i + 1] * u * v)
+
+
 def quad_grid_from_tin(V, T, p):
     """A TIN (points) → clean quads: a regular grid over it (turned along
     the site with ``grid_angle`` "auto" and the outline footprint), heights
-    sampled from the TIN, whole cells inside it only."""
+    sampled from the TIN, whole cells inside it only — with ``quad_rim``
+    "snap" plus a ring of quads out to the TIN's outline."""
     import numpy as np
     used = np.unique(T.ravel())
     theta = 0.0
@@ -1418,9 +1594,23 @@ def quad_grid_from_tin(V, T, p):
     fin = np.isfinite(Z)
     full = fin[:-1, :-1] & fin[:-1, 1:] & fin[1:, :-1] & fin[1:, 1:]
     U, W = np.meshgrid(u0 + np.arange(nx + 1) * h, v0 + np.arange(ny + 1) * h)
-    X = U * c - W * s
-    Y = U * s + W * c
-    return quad_cells(X, Y, np.nan_to_num(Z), full)
+    outline = None
+    if p.get("quad_rim") == "snap":
+        _rim, loops = rim_loops(T)
+        best = 0.0
+        for lp in loops:                             # the TIN's outer outline
+            if len(lp) >= 3 and polygon_area(L[lp]) > best:
+                best = polygon_area(L[lp])
+                outline = Outline(L[lp], V[lp, 2])
+        if outline is not None:
+            full = keep_off_outline(full, U, W, outline, h)
+    Vq, Tq, Cq = quad_cells(U, W, np.nan_to_num(Z), full)
+    if outline is not None:
+        Vq, Tq, Cq = snap_rim(Vq, Tq, Cq, outline,
+                              lambda xy, t: outline.z_at(t), h)
+    X = Vq[:, 0] * c - Vq[:, 1] * s
+    Y = Vq[:, 0] * s + Vq[:, 1] * c
+    return np.column_stack([X, Y, Vq[:, 2]]), Tq, Cq
 
 
 # ---------------------------------------------------------------------------
@@ -2288,8 +2478,17 @@ def _make_dialog_class():
             self.cb_angle.addItem("Along the site (auto)", "auto")
             self.cb_angle.addItem("World X / Y", "axis")
             self.cb_rim = QComboBox()
-            self.cb_rim.addItem("Whole cells only (clean quads)", "whole")
-            self.cb_rim.addItem("Cut to the outline (n-gons on the rim)", "cut")
+            self.cb_rim.addItem("Whole cells only (stepped rim)", "whole")
+            self.cb_rim.addItem("Snap to the outline (quads, clean rim)", "snap")
+            if contours:
+                self.cb_rim.addItem("Cut to the outline (n-gons on the rim)", "cut")
+            self.cb_rim.setToolTip(
+                "Whole cells only: only grid cells that lie inside - the rim "
+                "steps along the outline.\n"
+                "Snap to the outline: the whole cells plus one ring of quads "
+                "whose outer nodes sit on the outline (corners included).\n"
+                "Cut to the outline: the rim cells are cut off at the outline "
+                "(triangles and pentagons there).")
             if contours:
                 g = QGroupBox("Grid")
                 gl = QGridLayout(g)
@@ -2347,11 +2546,9 @@ def _make_dialog_class():
             self.chk_map = QCheckBox("Include a contour map (flat, at the base)")
             r = 0
             gl.addWidget(self.chk_quads, r, 0, 1, 2)
-            r += 1
-            if contours:
-                gl.addWidget(QLabel("Quads on the rim:"), r, 0)
-                gl.addWidget(self.cb_rim, r, 1)
-                r += 1
+            gl.addWidget(QLabel("Quads on the rim:"), r + 1, 0)
+            gl.addWidget(self.cb_rim, r + 1, 1)
+            r += 2
             gl.addWidget(self.chk_soft, r, 0, 1, 2)
             gl.addWidget(self.chk_skirt, r + 1, 0)
             gl.addWidget(self.sp_depth, r + 1, 1)
