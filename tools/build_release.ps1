@@ -1,4 +1,4 @@
-# Builds dist\PESI3D-Tools-<version>.zip: one folder "PESI3D-Tools" that the
+# Builds dist\Topology-3dsMax-<version>.zip: one folder "PESI3D-Tools" that the
 # user unpacks into %APPDATA%\Autodesk\ApplicationPlugins\.
 #   powershell -ExecutionPolicy Bypass -File tools\build_release.ps1
 
@@ -23,7 +23,7 @@ foreach ($f in "PackageContents.xml", "LICENSE", "README.md", "LIESMICH.md") {
 Copy-Item -Recurse (Join-Path $repo "Contents") $stage
 Get-ChildItem $stage -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
 
-$zip = Join-Path $dist "PESI3D-Tools-$version.zip"
+$zip = Join-Path $dist "Topology-3dsMax-$version.zip"
 if (Test-Path $zip) { Remove-Item $zip }
 Compress-Archive -Path $stage -DestinationPath $zip
 Remove-Item -Recurse -Force (Join-Path $dist "stage")

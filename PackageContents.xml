@@ -6,7 +6,7 @@
   Python 3 + PySide6 tools; needs 3ds Max 2025 or newer (new menu system).
 -->
 <ApplicationPackage SchemaVersion="1.0" AutodeskProduct="3ds Max" ProductType="Application"
-                    Name="PESI3D Tools" AppVersion="0.3.0" Author="PESI3D"
+                    Name="PESI3D Tools - Topology" AppVersion="1.2.0" Author="PESI3D"
                     Description="Modelling helpers for 3ds Max by PESI3D."
                     ProductCode="*" UpgradeCode="{6a001dd1-3ab1-4ac6-8447-33e1fa32c85b}">
     <CompanyDetails Name="PESI3D" Url="https://pesi3d.de" Email="kontakt@pesi3d.de"/>

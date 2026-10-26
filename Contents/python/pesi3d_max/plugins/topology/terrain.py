@@ -44,7 +44,7 @@ except Exception:  # noqa: BLE001
 
 KEY = "pesi_topology"
 TITLE = "Topology"
-VERSION = "1.1"
+VERSION = "1.2"
 APPDATA_ID = 0x50D3A2               # node AppData slot (Grading uses …A1)
 CHILD_ID = 0x50D3A3                 # AppData tag on the child splines
 SETTINGS_ORG = "PESI3D"
