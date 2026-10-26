@@ -4,7 +4,7 @@ Modelling helpers for Autodesk 3ds Max by [PESI3D](https://pesi3d.de) — the
 3ds Max counterpart of the PESI3D plugins for IngeTrazo.
 
 > Status: **0.3.0** – framework, **Topology** (terrain from contour splines, points or
-> the spot heights of a site plan PDF) and the template plugin *Hello Box*.
+> the spot heights of a site plan PDF).
 
 Requires **3ds Max 2025 or newer**: the tools use PySide6 (Qt 6, shipped since
 3ds Max 2025) and the menu system introduced with 3ds Max 2025. 3ds Max 2024 and
@@ -45,7 +45,8 @@ Errors are written to `%LOCALAPPDATA%\PESI3D\3dsMax\pesi3d.log`
 
 ## Writing a plugin
 
-Add a module to `Contents/python/pesi3d_max/plugins/` — `hello.py` is the template:
+Add a module to `Contents/python/pesi3d_max/plugins/` — `examples/hello.py` is the
+template (copy it there; it is not shipped):
 
 ```python
 NAME = "Hello"

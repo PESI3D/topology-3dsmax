@@ -1,8 +1,9 @@
-"""Hello - the template plugin.
+"""Hello - the template plugin (not shipped, not loaded).
 
 Puts a box on top of every selected object (or one at the origin if nothing
-is selected) and shows the PESI3D preview dialog. Copy this file to start a
-new plugin.
+is selected) and shows the PESI3D preview dialog. To start a new plugin, copy
+this file to Contents/python/pesi3d_max/plugins/<name>.py and rename it; to
+try it as it is, copy it there as hello.py and restart 3ds Max.
 """
 
 from pymxs import runtime as rt

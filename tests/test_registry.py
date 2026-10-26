@@ -80,8 +80,8 @@ class RegistryTest(unittest.TestCase):
         reg = registry.Registry()          # pesi3d_max.plugins
         reg.discover()
         self.assertEqual(reg.plugins["topology"].error, "")
-        # hello imports pymxs at module level - only loadable inside 3ds Max
-        self.assertIn("pymxs", reg.plugins["hello"].error)
+        # the template lives in examples/, it is not shipped or loaded
+        self.assertNotIn("hello", reg.plugins)
         macros = [a.macro_name for a in reg.actions()]
         self.assertIn("Topology_Contours", macros)
         self.assertEqual(len(macros), len(set(macros)))

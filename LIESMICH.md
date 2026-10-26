@@ -4,7 +4,7 @@ Modellier-Helfer für Autodesk 3ds Max von [PESI3D](https://pesi3d.de) — das
 3ds-Max-Gegenstück zu den PESI3D-Plugins für IngeTrazo.
 
 > Stand: **0.3.0** – Grundgerüst, **Topology** (Gelände aus Höhenlinien, Punkten oder den
-> Höhenpunkten eines Lageplan-PDFs) und das Vorlage-Plugin *Hello Box*.
+> Höhenpunkten eines Lageplan-PDFs).
 
 Benötigt **3ds Max 2025 oder neuer**: Die Werkzeuge nutzen PySide6 (Qt 6, in 3ds Max
 seit 2025) und das mit 3ds Max 2025 eingeführte Menüsystem. 3ds Max 2024 und älter
@@ -48,7 +48,7 @@ Fehler landen in `%LOCALAPPDATA%\PESI3D\3dsMax\pesi3d.log`
 
 ## Eigene Plugins
 
-Ein Modul in `Contents/python/pesi3d_max/plugins/` anlegen — `hello.py` ist die
+Ein Modul in `Contents/python/pesi3d_max/plugins/` anlegen — `examples/hello.py` ist die
 Vorlage. Werkzeuge mit Einstellungen erben von `pesi3d_max.preview.PreviewDialog`
 und bekommen die PESI3D-Live-Vorschau geschenkt (nicht-modal, *Follow selection*,
 **● Live Preview ON** / Reset / OK / Cancel, Statusbanner, Ergebnis als **ein**
