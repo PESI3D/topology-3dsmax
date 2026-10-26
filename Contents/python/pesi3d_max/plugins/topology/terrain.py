@@ -75,7 +75,12 @@ def default_params() -> dict:
         "min_len": 0.0,           # metres, 0 = off
         "max_edge": 0.0,          # metres, 0 = off  (points)
         "soft": True,
-        "quads": False,           # contours: one quad per grid cell
+        "quads": False,           # one quad per grid cell (points: a grid
+                                  # is laid over the TIN)
+        "quad_rim": "whole",      # contours + quads: "whole" cells only
+                                  # (clean quads) | "cut" to the outline
+        "grid_angle": "auto",     # points + quads: "auto" (along the site)
+                                  # | "axis" (world X/Y)
         "smooth_r": 0.0,          # contours: smoothing radius, 0 = raw
         "skirt": True,
         "skirt_depth": 1.0,       # metres below the lowest point
@@ -109,6 +114,10 @@ def normalize_params(p) -> dict:
         out["peaks"] = "round"
     if out["boundary"] not in ("hull", "box", "cut"):
         out["boundary"] = "hull"
+    if out["quad_rim"] not in ("whole", "cut"):
+        out["quad_rim"] = "whole"
+    if out["grid_angle"] not in ("auto", "axis"):
+        out["grid_angle"] = "auto"
     return out
 
 
@@ -977,6 +986,8 @@ def terrain_from_contours(segs, p):
     eps = h * 1e-7
     inside = _inside_convex(hull, X, Y, eps)
     full = inside[:-1, :-1] & inside[:-1, 1:] & inside[1:, :-1] & inside[1:, 1:]
+    if p.get("quads") and p.get("quad_rim", "whole") == "whole":
+        return quad_cells(X, Y, Z, full)
 
     # Full cells: two triangles each, split along the diagonal whose ends
     # are closer in height (follows ridges and valleys).
@@ -1273,6 +1284,143 @@ def weld(V, T, tol, with_mask=False):
     if with_mask:
         return V2, T2[ok], ok
     return V2, T2[ok]
+
+
+# ---------------------------------------------------------------------------
+# Clean quads: whole grid cells only, vertices numbered row by row
+# ---------------------------------------------------------------------------
+
+def quad_cells(X, Y, Z, full):
+    """Grid nodes ``X, Y, Z`` (ny+1, nx+1) and the cells to keep ``full``
+    (ny, nx) → ``(V, T, C)``: two fan triangles per cell (split along the
+    diagonal whose ends are closer in height), C = cell id. Only the nodes
+    the cells use are kept, numbered row by row (rows south → north,
+    west → east in each row); cells in the same order. ``assemble`` turns
+    each cell back into ONE quad polygon."""
+    import numpy as np
+    if not full.any():
+        raise TopoError("No whole grid cell fits — use smaller cells.")
+    ny, nx = full.shape
+    idx = np.arange((ny + 1) * (nx + 1)).reshape(ny + 1, nx + 1)
+    used = np.zeros((ny + 1, nx + 1), bool)
+    used[:-1, :-1] |= full
+    used[:-1, 1:] |= full
+    used[1:, :-1] |= full
+    used[1:, 1:] |= full
+    remap = -np.ones(idx.size, dtype=np.int64)
+    remap[used.ravel()] = np.arange(int(used.sum()))
+    a = remap[idx[:-1, :-1][full]]
+    b = remap[idx[:-1, 1:][full]]
+    c = remap[idx[1:, 1:][full]]
+    d = remap[idx[1:, :-1][full]]
+    Zf = Z.ravel()[used.ravel()]
+    diag_ac = np.abs(Zf[a] - Zf[c]) <= np.abs(Zf[b] - Zf[d])
+    t1 = np.where(diag_ac[:, None], np.stack([a, b, c], 1), np.stack([b, c, d], 1))
+    t2 = np.where(diag_ac[:, None], np.stack([a, c, d], 1), np.stack([b, d, a], 1))
+    n = len(a)
+    T = np.empty((2 * n, 3), dtype=np.int64)
+    T[0::2], T[1::2] = t1, t2                 # a cell's two triangles together
+    C = np.repeat(np.arange(n, dtype=np.int64), 2)
+    V = np.column_stack([X.ravel()[used.ravel()], Y.ravel()[used.ravel()], Zf])
+    return V, T, C
+
+
+def min_rect_angle(xy):
+    """Angle (radians, -45°…45°) of the smallest rectangle round the points
+    — a grid turned by it runs along the site."""
+    import numpy as np
+    hull = np.asarray(convex_hull(np.round(np.asarray(xy, float), 9)), float)
+    if len(hull) < 3:
+        return 0.0
+    best, angle = None, 0.0
+    for i in range(len(hull)):
+        dx, dy = hull[(i + 1) % len(hull)] - hull[i]
+        if dx == 0 and dy == 0:
+            continue
+        a = math.atan2(dy, dx)
+        c, s = math.cos(a), math.sin(a)
+        u = hull[:, 0] * c + hull[:, 1] * s
+        v = -hull[:, 0] * s + hull[:, 1] * c
+        area = float(np.ptp(u) * np.ptp(v))
+        if best is None or area < best - 1e-12 * max(area, 1.0):
+            best, angle = area, a
+    q = math.pi / 2
+    angle = (angle + q / 2) % q - q / 2          # same rectangle, nearest to X
+    return 0.0 if abs(angle) < 1e-9 else angle
+
+
+def sample_tin(P, Zv, T, u0, v0, h, nx, ny):
+    """Heights of the grid nodes ``u0 + i·h, v0 + j·h`` on the TIN
+    (vertices ``P`` (n, 2), heights ``Zv``); NaN outside the TIN."""
+    import numpy as np
+    out = np.full((ny + 1) * (nx + 1), np.nan)
+    A, B, Cc = P[T[:, 0]], P[T[:, 1]], P[T[:, 2]]
+    det = (B[:, 1] - Cc[:, 1]) * (A[:, 0] - Cc[:, 0]) + \
+          (Cc[:, 0] - B[:, 0]) * (A[:, 1] - Cc[:, 1])
+    ok = np.abs(det) > 1e-18
+    A, B, Cc, det, T = A[ok], B[ok], Cc[ok], det[ok], T[ok]
+    lo = np.minimum(np.minimum(A, B), Cc)
+    hi = np.maximum(np.maximum(A, B), Cc)
+    e = 1e-7
+    i0 = np.clip(np.ceil((lo[:, 0] - u0) / h - e), 0, nx).astype(np.int64)
+    i1 = np.clip(np.floor((hi[:, 0] - u0) / h + e), -1, nx).astype(np.int64)
+    j0 = np.clip(np.ceil((lo[:, 1] - v0) / h - e), 0, ny).astype(np.int64)
+    j1 = np.clip(np.floor((hi[:, 1] - v0) / h + e), -1, ny).astype(np.int64)
+    wi = np.maximum(i1 - i0 + 1, 0)
+    wj = np.maximum(j1 - j0 + 1, 0)
+    cnt = wi * wj
+    start = 0
+    while start < len(T):                       # chunks of ≈ 4 M candidates
+        cs = np.cumsum(cnt[start:])
+        stop = start + max(1, int(np.searchsorted(cs, 4_000_000)) + 1)
+        sl = slice(start, min(stop, len(T)))
+        n = cnt[sl]
+        tot = int(n.sum())
+        start = sl.stop
+        if tot == 0:
+            continue
+        t = np.repeat(np.arange(sl.start, sl.stop), n)
+        k = np.arange(tot) - np.repeat(np.cumsum(n) - n, n)
+        ii = i0[t] + k % wi[t]
+        jj = j0[t] + k // wi[t]
+        px, py = u0 + ii * h, v0 + jj * h
+        l1 = ((B[t, 1] - Cc[t, 1]) * (px - Cc[t, 0]) +
+              (Cc[t, 0] - B[t, 0]) * (py - Cc[t, 1])) / det[t]
+        l2 = ((Cc[t, 1] - A[t, 1]) * (px - Cc[t, 0]) +
+              (A[t, 0] - Cc[t, 0]) * (py - Cc[t, 1])) / det[t]
+        l3 = 1.0 - l1 - l2
+        tol = -1e-9
+        inside = (l1 >= tol) & (l2 >= tol) & (l3 >= tol)
+        tt = T[t[inside]]
+        z = (l1[inside] * Zv[tt[:, 0]] + l2[inside] * Zv[tt[:, 1]]
+             + l3[inside] * Zv[tt[:, 2]])
+        out[jj[inside] * (nx + 1) + ii[inside]] = z
+    return out.reshape(ny + 1, nx + 1)
+
+
+def quad_grid_from_tin(V, T, p):
+    """A TIN (points) → clean quads: a regular grid over it (turned along
+    the site with ``grid_angle`` "auto" and the outline footprint), heights
+    sampled from the TIN, whole cells inside it only."""
+    import numpy as np
+    used = np.unique(T.ravel())
+    theta = 0.0
+    if p.get("grid_angle", "auto") == "auto" and p["boundary"] == "hull":
+        theta = min_rect_angle(V[used, :2])
+    c, s = math.cos(theta), math.sin(theta)
+    L = np.column_stack([V[:, 0] * c + V[:, 1] * s,
+                         -V[:, 0] * s + V[:, 1] * c])
+    u0, v0 = L[used].min(0)
+    u1, v1 = L[used].max(0)
+    h, nx, ny = grid_dims((u0, v0, u1, v1), p)
+    check_size(2 * nx * ny, p.get("force", False))
+    Z = sample_tin(L, V[:, 2], T, u0, v0, h, nx, ny)
+    fin = np.isfinite(Z)
+    full = fin[:-1, :-1] & fin[:-1, 1:] & fin[1:, :-1] & fin[1:, 1:]
+    U, W = np.meshgrid(u0 + np.arange(nx + 1) * h, v0 + np.arange(ny + 1) * h)
+    X = U * c - W * s
+    Y = U * s + W * c
+    return quad_cells(X, Y, np.nan_to_num(Z), full)
 
 
 # ---------------------------------------------------------------------------
@@ -1611,6 +1759,9 @@ def compute(data, p):
         V, T, C = terrain_from_contours(segs, p)
     else:
         V, T = terrain_from_points(data["points"], p)
+        if p.get("quads"):
+            V, T, C = quad_grid_from_tin(np.asarray(V, float),
+                                         np.asarray(T, np.int64), p)
     V = np.asarray(V, dtype=float)
     T = np.asarray(T, dtype=np.int64)
     if len(T) == 0:
@@ -1655,9 +1806,11 @@ def assemble(res, p):
     # terrain
     nfaces = 0
     unit = "triangles"
+    qpolys = None
     if C is not None and p.get("quads"):
         unit = "quads"
-        for poly in cells_to_polys(T2, C):
+        qpolys = cells_to_polys(T2, C)
+        for poly in qpolys:
             n = len(poly)
             for k in range(1, n - 1):
                 f = len(tris)
@@ -1673,6 +1826,15 @@ def assemble(res, p):
             tris.append((a, b, c))
             sg.append(1 if soft else 0)
         nfaces = len(T2)
+    # quads: the bottom is the terrain's cell grid again, flat at the base
+    # (instead of one big polygon); its vertices follow the terrain's, row
+    # by row, and the skirt shares the ones on the rim
+    zbase = float(V[:, 2].min()) - p["skirt_depth"]
+    quad_bottom = (qpolys is not None and p["skirt"] and p["bottom"]
+                   and any(k == "bottom" for k in kinds))
+    if quad_bottom:
+        nterr = len(verts)
+        base_of = [vid((q[0], q[1], zbase)) for q in verts[:nterr]]
     # skirt quads (B, A, A_base, B_base) → two triangles, hidden diagonal
     bottoms = []
     for ring, kind in zip(polys, kinds):
@@ -1683,8 +1845,20 @@ def assemble(res, p):
             tris.append((B, Ab, Bb))
             sg += [2 if soft else 0] * 2
             hide += [(f, 3), (f + 1, 1)]
-        elif kind == "bottom":
+        elif kind == "bottom" and not quad_bottom:
             bottoms.append([vid(q) for q in ring])
+    if quad_bottom:
+        for poly in qpolys:
+            ids = [base_of[i] for i in reversed(poly)]      # faces down
+            n = len(ids)
+            for k in range(1, n - 1):
+                f = len(tris)
+                tris.append((ids[0], ids[k], ids[k + 1]))
+                sg.append(4 if soft else 0)
+                if k >= 2:
+                    hide.append((f, 1))
+                if k + 1 <= n - 2:
+                    hide.append((f, 3))
     # vertices only the bottom uses go after the mesh vertices
     used_v = np.zeros(len(verts), bool)
     used_v[np.asarray(tris, dtype=np.int64).ravel()] = True
@@ -2110,6 +2284,12 @@ def _make_dialog_class():
             self.sp_sr = dspin(0, 1000, 1, 0.5, " m", "Off (raw)")
             self.sp_maxedge = dspin(0, 100000, 2, 1.0, " m", "Off")
             self.lbl_grid = QLabel("")
+            self.cb_angle = QComboBox()
+            self.cb_angle.addItem("Along the site (auto)", "auto")
+            self.cb_angle.addItem("World X / Y", "axis")
+            self.cb_rim = QComboBox()
+            self.cb_rim.addItem("Whole cells only (clean quads)", "whole")
+            self.cb_rim.addItem("Cut to the outline (n-gons on the rim)", "cut")
             if contours:
                 g = QGroupBox("Grid")
                 gl = QGridLayout(g)
@@ -2138,6 +2318,13 @@ def _make_dialog_class():
                 gl.addWidget(QLabel("Max. edge length on the rim:"), 1, 0)
                 gl.addWidget(self.sp_maxedge, 1, 1)
                 gl.addWidget(self.lbl_grid, 2, 0, 1, 2)
+                # quad grid (Output ▸ Quads)
+                gl.addWidget(self.rb_cells, 3, 0)
+                gl.addWidget(self.sp_cells, 3, 1)
+                gl.addWidget(self.rb_size, 4, 0)
+                gl.addWidget(self.sp_csize, 4, 1)
+                gl.addWidget(QLabel("Quad grid direction:"), 5, 0)
+                gl.addWidget(self.cb_angle, 5, 1)
             self.cb_bound.addItem("Rectangle — interpolated to the full box", "box")
             self.cb_bound.addItem("Rectangle — cut inside the data", "cut")
             lay.addWidget(g)
@@ -2145,6 +2332,13 @@ def _make_dialog_class():
             g = QGroupBox("Output")
             gl = QGridLayout(g)
             self.chk_quads = QCheckBox("Quads instead of triangles")
+            if not contours:
+                self.chk_quads.setText("Quads instead of triangles (regular grid)")
+                self.chk_quads.setToolTip(
+                    "A regular grid is laid over the points: clean quads, the "
+                    "vertices numbered row by row.\nThe surface follows the "
+                    "triangulation of the points, but the points themselves "
+                    "are no longer vertices.")
             self.chk_soft = QCheckBox("Smooth shading (smoothing groups)")
             self.chk_skirt = QCheckBox("Skirt, depth below the lowest point:")
             self.sp_depth = dspin(0, 100000, 2, 0.5)
@@ -2152,8 +2346,11 @@ def _make_dialog_class():
             self.chk_cont = QCheckBox("Include the contours (child spline)")
             self.chk_map = QCheckBox("Include a contour map (flat, at the base)")
             r = 0
+            gl.addWidget(self.chk_quads, r, 0, 1, 2)
+            r += 1
             if contours:
-                gl.addWidget(self.chk_quads, r, 0, 1, 2)
+                gl.addWidget(QLabel("Quads on the rim:"), r, 0)
+                gl.addWidget(self.cb_rim, r, 1)
                 r += 1
             gl.addWidget(self.chk_soft, r, 0, 1, 2)
             gl.addWidget(self.chk_skirt, r + 1, 0)
@@ -2188,7 +2385,7 @@ def _make_dialog_class():
                       self.sp_cells, self.sp_csize, self.sp_sr,
                       self.sp_maxedge, self.sp_depth):
                 w.valueChanged.connect(self._changed)
-            for w in (self.cb_bound, self.cb_peaks):
+            for w in (self.cb_bound, self.cb_peaks, self.cb_angle, self.cb_rim):
                 w.currentIndexChanged.connect(self._changed)
             for w in (self.rb_cells, self.chk_quads, self.chk_soft,
                       self.chk_skirt, self.chk_bottom, self.chk_cont,
@@ -2206,7 +2403,7 @@ def _make_dialog_class():
                     self.sp_depth, self.cb_bound, self.cb_peaks, self.rb_cells,
                     self.rb_size, self.chk_quads, self.chk_soft,
                     self.chk_skirt, self.chk_bottom, self.chk_cont,
-                    self.chk_map, self.chk_follow)
+                    self.chk_map, self.chk_follow, self.cb_angle, self.cb_rim)
 
         def _load_ui(self):
             p = self.params
@@ -2225,6 +2422,8 @@ def _make_dialog_class():
             self.cb_bound.setCurrentIndex(max(0, self.cb_bound.findData(p["boundary"])))
             self.cb_peaks.setCurrentIndex(max(0, self.cb_peaks.findData(p["peaks"])))
             self.chk_quads.setChecked(p["quads"])
+            self.cb_angle.setCurrentIndex(max(0, self.cb_angle.findData(p["grid_angle"])))
+            self.cb_rim.setCurrentIndex(max(0, self.cb_rim.findData(p["quad_rim"])))
             self.chk_soft.setChecked(p["soft"])
             self.chk_skirt.setChecked(p["skirt"])
             self.chk_bottom.setChecked(p["bottom"])
@@ -2248,7 +2447,9 @@ def _make_dialog_class():
                 "min_len": self.sp_minlen.value(),
                 "max_edge": self.sp_maxedge.value(),
                 "soft": self.chk_soft.isChecked(),
-                "quads": self.chk_quads.isChecked() and self.mode == "contours",
+                "quads": self.chk_quads.isChecked(),
+                "quad_rim": self.cb_rim.currentData(),
+                "grid_angle": self.cb_angle.currentData(),
                 "smooth_r": self.sp_sr.value(),
                 "skirt": self.chk_skirt.isChecked(),
                 "skirt_depth": self.sp_depth.value(),
@@ -2260,8 +2461,14 @@ def _make_dialog_class():
             })
 
         def _enable(self):
-            self.sp_cells.setEnabled(self.rb_cells.isChecked())
-            self.sp_csize.setEnabled(self.rb_size.isChecked())
+            q = self.chk_quads.isChecked()
+            grid = self.mode == "contours" or q      # points: grid only for quads
+            self.rb_cells.setEnabled(grid)
+            self.rb_size.setEnabled(grid)
+            self.sp_cells.setEnabled(grid and self.rb_cells.isChecked())
+            self.sp_csize.setEnabled(grid and self.rb_size.isChecked())
+            self.cb_angle.setEnabled(q and self.cb_bound.currentData() == "hull")
+            self.cb_rim.setEnabled(q)
             sk = self.chk_skirt.isChecked()
             self.sp_depth.setEnabled(sk)
             self.chk_bottom.setEnabled(sk)
@@ -2324,9 +2531,22 @@ def _make_dialog_class():
                     f"{fmt_len(pts[:, 2].min())} … {fmt_len(pts[:, 2].max())}")
                 area = float(ext[0] * ext[1]) or 1.0
                 sp = math.sqrt(area / max(len(pts), 1))
-                self.lbl_grid.setText(
-                    f"Typical point spacing ≈ {fmt_len(sp)} · ≈ "
-                    f"{estimate_point_triangles(len(pts)):,} triangles")
+                if p["quads"]:
+                    theta = 0.0
+                    if p["grid_angle"] == "auto" and p["boundary"] == "hull":
+                        theta = min_rect_angle(pts[:, :2])
+                    c, s = math.cos(theta), math.sin(theta)
+                    u = pts[:, 0] * c + pts[:, 1] * s
+                    v = -pts[:, 0] * s + pts[:, 1] * c
+                    h, nx, ny = grid_dims((u.min(), v.min(), u.max(), v.max()), ps)
+                    turn = f", turned {math.degrees(theta):.1f}°" if theta else ""
+                    self.lbl_grid.setText(
+                        f"Point spacing ≈ {fmt_len(sp)} · quad grid {nx} × {ny} "
+                        f"cells, {fmt_len(h)}{turn} · ≤ {nx * ny:,} quads")
+                else:
+                    self.lbl_grid.setText(
+                        f"Typical point spacing ≈ {fmt_len(sp)} · ≈ "
+                        f"{estimate_point_triangles(len(pts)):,} triangles")
 
         def _read_selection(self):
             nodes = [n for n in rt.selection if n not in self.preview]
