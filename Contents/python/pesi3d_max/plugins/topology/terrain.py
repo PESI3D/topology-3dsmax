@@ -846,10 +846,24 @@ def rim_points(V, spacing, k=12):
         w = 1.0 / np.maximum(dk, 1e-12)
         Z[s0:s0 + 64] = (w * V[idx, 2]).sum(1) / w.sum(1)
     pts = np.column_stack([R, Z])
-    # Drop rim points that coincide with data points.
+    # Drop rim points that coincide with data points — and (3ds Max port)
+    # those closer than half a spacing to one: a data point lying almost on
+    # the box gave near-vertical sliver triangles (folds of 130°+). The four
+    # corners stay unless they coincide, so the box remains whole.
     key = {(round(x, 6), round(y, 6)) for x, y in V[:, :2].tolist()}
-    keep = [i for i, (x, y) in enumerate(R.tolist())
-            if (round(x, 6), round(y, 6)) not in key]
+    corner = {(round(x, 6), round(y, 6)) for x in (x0, x1) for y in (y0, y1)}
+    near = np.empty(len(R))
+    for s0 in range(0, len(R), 256):
+        r = R[s0:s0 + 256]
+        near[s0:s0 + 256] = np.sqrt(((r[:, None, :] - V[None, :, :2]) ** 2).sum(2).min(1))
+    keep = []
+    for i, (x, y) in enumerate(R.tolist()):
+        k_ = (round(x, 6), round(y, 6))
+        if k_ in key:
+            continue
+        if k_ not in corner and near[i] < 0.5 * spacing:
+            continue
+        keep.append(i)
     return pts[keep]
 
 
@@ -1254,6 +1268,41 @@ def trim_long_edges(V, T, max_len):
                             "increase it or set it to 0.")
 
 
+def peel_slivers(V, T, rel=0.02, max_nz=0.5):
+    """Peel needle triangles off the rim: the corner opposite a rim edge
+    lies almost ON that edge (closer than ``rel`` × the typical point
+    spacing) and the face is steep (normal z < ``max_nz``). Points lying
+    nearly in a line on the outline make such slivers; their steep, twisted
+    faces show as creases. Long flat rim triangles stay. (3ds Max port.)"""
+    import numpy as np
+    if len(T) == 0:
+        return T
+    used = np.unique(T.ravel())
+    ext = V[used, :2].max(0) - V[used, :2].min(0)
+    spacing = math.sqrt(max(float(ext[0] * ext[1]), 1e-12) / max(len(used), 1))
+    tol = rel * spacing
+    T = T.copy()
+    for _ in range(50):
+        m = len(T)
+        e = np.concatenate([T[:, [0, 1]], T[:, [1, 2]], T[:, [2, 0]]])
+        opp = np.concatenate([T[:, 2], T[:, 0], T[:, 1]])
+        k = np.sort(e, 1)
+        _u, inv, cnt = np.unique(k, axis=0, return_inverse=True, return_counts=True)
+        rim = cnt[inv.ravel()] == 1
+        a, b, c = V[e[:, 0], :2], V[e[:, 1], :2], V[opp, :2]
+        d = b - a
+        L = np.maximum(np.hypot(*d.T), 1e-300)
+        dist = np.abs(d[:, 0] * (c[:, 1] - a[:, 1]) - d[:, 1] * (c[:, 0] - a[:, 0])) / L
+        thin = rim & (dist < tol)
+        n = np.cross(V[T[:, 1]] - V[T[:, 0]], V[T[:, 2]] - V[T[:, 0]])
+        nz = np.abs(n[:, 2]) / np.maximum(np.linalg.norm(n, axis=1), 1e-300)
+        bad = (thin[:m] | thin[m:2 * m] | thin[2 * m:]) & (nz < max_nz)
+        if not bad.any() or bad.all():
+            return T
+        T = T[~bad]
+    return T
+
+
 def estimate_point_triangles(n_points):
     """A Delaunay TIN of n points has ≈ 2n triangles."""
     return max(0, 2 * int(n_points) - 2)
@@ -1275,6 +1324,7 @@ def terrain_from_points(points, p):
     T = delaunay(V[:, :2])
     if len(T) == 0:
         raise TopoError("The points are collinear — no surface.")
+    T = peel_slivers(V, T)
     if mode == "hull":
         T = trim_long_edges(V, T, p["max_edge"])
     elif mode == "cut":
@@ -2091,21 +2141,24 @@ def assemble(res, p):
     if C is not None and p.get("quads"):
         unit = "quads"
         qpolys = cells_to_polys(T2, C)
-        for poly in qpolys:
+        tg = terrain_groups(Vc, qpolys) if soft else [0] * len(qpolys)
+        for poly, g in zip(qpolys, tg):
             n = len(poly)
             for k in range(1, n - 1):
                 f = len(tris)
                 tris.append((poly[0], poly[k], poly[k + 1]))
-                sg.append(1 if soft else 0)
+                sg.append(g)
                 if k >= 2:
                     hide.append((f, 1))            # v0–vk
                 if k + 1 <= n - 2:
                     hide.append((f, 3))            # vk+1–v0
             nfaces += 1
     else:
-        for a, b, c in T2.tolist():
+        tl = T2.tolist()
+        tg = terrain_groups(Vc, tl) if soft else [0] * len(tl)
+        for (a, b, c), g in zip(tl, tg):
             tris.append((a, b, c))
-            sg.append(1 if soft else 0)
+            sg.append(g)
         nfaces = len(T2)
     # quads: the bottom is the terrain's cell grid again, flat at the base
     # (instead of one big polygon); its vertices follow the terrain's, row
@@ -2163,6 +2216,73 @@ def assemble(res, p):
 
 
 SKIRT_GROUPS = (2, 3, 5, 6)      # 1 = terrain, 4 = bottom
+TERRAIN_GROUPS = (1,) + tuple(range(7, 33))
+CREASE_DEG = 45.0                # sharper folds of the surface stay sharp
+
+
+def terrain_groups(V, loops, crease_deg=CREASE_DEG):
+    """Smoothing groups of the terrain faces (``loops`` of vertex ids, a
+    triangle or a quad each), like 3ds Max's Auto Smooth: faces meeting at
+    a fold sharper than ``crease_deg`` do not share a group. Usually that
+    is no fold at all → everything group 1. Otherwise the regions between
+    the folds get groups from TERRAIN_GROUPS, neighbouring regions never
+    the same one (skirt and bottom groups are never used)."""
+    import numpy as np
+    m = len(loops)
+    if m == 0:
+        return []
+    P = np.asarray(V, dtype=float)
+    N = np.zeros((m, 3))
+    for i, q in enumerate(loops):                 # Newell normal
+        Q = P[list(q)]
+        R = np.roll(Q, -1, axis=0)
+        N[i] = [((Q[:, 1] - R[:, 1]) * (Q[:, 2] + R[:, 2])).sum(),
+                ((Q[:, 2] - R[:, 2]) * (Q[:, 0] + R[:, 0])).sum(),
+                ((Q[:, 0] - R[:, 0]) * (Q[:, 1] + R[:, 1])).sum()]
+    N /= np.maximum(np.linalg.norm(N, axis=1), 1e-300)[:, None]
+    owner = {}
+    for i, q in enumerate(loops):
+        for k in range(len(q)):
+            a, b = q[k], q[(k + 1) % len(q)]
+            owner.setdefault((min(a, b), max(a, b)), []).append(i)
+    lim = math.cos(math.radians(crease_deg))
+    parent = list(range(m))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    sharp = []
+    for fs in owner.values():
+        if len(fs) != 2:
+            continue
+        a, b = fs
+        if float(N[a] @ N[b]) >= lim:
+            parent[find(a)] = find(b)
+        else:
+            sharp.append((a, b))
+    if not sharp:
+        return [1] * m
+    comp = [find(i) for i in range(m)]
+    touch = {}
+    for a, b in sharp:
+        ca, cb = comp[a], comp[b]
+        if ca != cb:
+            touch.setdefault(ca, set()).add(cb)
+            touch.setdefault(cb, set()).add(ca)
+    colour = {}
+    for c in dict.fromkeys(comp):
+        used = {colour[o] for o in touch.get(c, ()) if o in colour}
+        colour[c] = next((g for g in TERRAIN_GROUPS if g not in used), TERRAIN_GROUPS[0])
+    out = [colour[c] for c in comp]
+    # a lone fold (smooth paths lead round it) cannot be kept sharp by
+    # regions: its faces get no group (faceted) instead of a smeared crease
+    for a, b in sharp:
+        if comp[a] == comp[b]:
+            out[a] = out[b] = 0
+    return out
 SKIRT_CORNER_DEG = 30.0
 
 

@@ -174,6 +174,36 @@ class SnappedRimTest(unittest.TestCase):
         self.assertEqual(A["bottoms"], [])
 
 
+class TerrainCreaseTest(unittest.TestCase):
+    def ridge(self, **kw):
+        g = np.linspace(-20, 20, 21)
+        X, Y = np.meshgrid(g, g)
+        pts = np.column_stack([X.ravel(), Y.ravel(), np.abs(X.ravel())])   # roof
+        p = params(skirt=True, bottom=True, **kw)
+        res = T.compute({"mode": "points", "points": list(map(tuple, pts))}, p)
+        return res, T.assemble(res, p)
+
+    def check(self, res, A):
+        nter = 2 * len(T.cells_to_polys(res["T"], res["C"])) if A["unit"] == "quads" else A["nfaces"]
+        tris = np.asarray(A["tris"][:nter])
+        V = np.asarray(A["verts"])
+        sg = np.asarray(A["sg"][:nter])
+        n = np.cross(V[tris[:, 1]] - V[tris[:, 0]], V[tris[:, 2]] - V[tris[:, 0]])
+        n /= np.linalg.norm(n, axis=1)[:, None]
+        left, right = n[:, 0] > 0.3, n[:, 0] < -0.3
+        self.assertTrue(left.any() and right.any())
+        self.assertEqual(len(set(sg[left])), 1)                # each roof side smooth
+        self.assertEqual(len(set(sg[right])), 1)
+        self.assertNotEqual(set(sg[left]), set(sg[right]))     # the ridge stays sharp
+        self.assertFalse(set(sg.tolist()) & {2, 3, 4, 5, 6})   # skirt/bottom groups free
+
+    def test_ridge_triangles(self):
+        self.check(*self.ridge(quads=False))
+
+    def test_ridge_quads(self):
+        self.check(*self.ridge(grid_angle="axis", cells=20))
+
+
 class SkirtShadingTest(unittest.TestCase):
     def test_sharp_skirt_corners(self):
         rng = np.random.default_rng(5)
