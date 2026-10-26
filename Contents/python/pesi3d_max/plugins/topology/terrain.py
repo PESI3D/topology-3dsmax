@@ -1966,6 +1966,21 @@ def _set_hidden(node, hidden):
             c.isHidden = hidden
 
 
+def _zoom_to(node):
+    """Frame the active viewport on ``node`` (selection stays as it is),
+    with a margin - ZoomToBounds on the bounding box cuts corners off in a
+    perspective view, a cube round the bounding sphere fits from any angle."""
+    rt = _rt()
+    try:
+        lo, hi = node.min, node.max
+        c = (lo + hi) / 2
+        r = rt.length(hi - lo) / 2 * 0.6     # ZoomToBounds adds its own margin
+        d = rt.Point3(r, r, r)
+        rt.viewport.ZoomToBounds(False, c - d, c + d)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def selected_terrain():
     rt = _rt()
     sel = [n for n in rt.selection if is_terrain(n)]
@@ -2011,6 +2026,8 @@ def _make_dialog_class():
             self.data = data
             self.mode = data["mode"]
             self.old = old
+            # a terrain from a plan appears somewhere new: show it once
+            self._frame = old is None and bool(data.get("source"))
             self.preview = []            # preview nodes
             self.result = None           # (res, key)
             self._busy = False
@@ -2381,6 +2398,9 @@ def _make_dialog_class():
                     node, kids, A, failed = build_node(
                         res, ps, self.data, None, "Terrain (preview)")
                     self.preview = [node] + kids
+                if self._frame:
+                    self._frame = False
+                    _zoom_to(node)
                 rt.redrawViews()
                 n = A["nfaces"]
                 msg = (f"● LIVE PREVIEW — {n:,} {A['unit']} "
